@@ -1,46 +1,105 @@
 import { useState } from "react";
-import reactLogo from "./assets/react.svg";
 import { invoke } from "@tauri-apps/api/tauri";
 import "./App.css";
 
+type Method = "GET" | "POST" | "PUT" | "DELETE";
+
 function App() {
-  const [url, setUrl] = useState("");
+  // TODO(reno): the url/body params are test values
+  const [url, setUrl] = useState("http://localhost:9200/_search");
   const [body, setBody] = useState("");
-  const [response, setResponse] = useState("");
+  const [method, setMethod] = useState<Method>("POST");
+  const [response, setResponse] = useState("Response");
+  const [sendBody, setSendBody] = useState(true);
 
   async function makeRequest() {
     // Learn more about Tauri commands at https://tauri.app/v1/guides/features/command
-	setResponse(await invoke("make_request", { url, body}));
+    if (sendBody) {
+      setResponse(
+        await invoke("make_request", { url, body, methodStr: method })
+      );
+    } else {
+      setResponse(
+        await invoke("make_request", { url, body: "", methodStr: method })
+      );
+    }
   }
 
   return (
-    <div className="container">
-      <h1>rscc</h1>
-
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <div className="row">
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            makeRequest();
-          }}
-        >
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        makeRequest();
+      }}
+    >
+      <div className="container">
+        <div className="row">
+            <select
+              name="method"
+              id="method"
+              value={method}
+              // TODO(reno): Parse this w/ zod?
+              onChange={(e) => setMethod(e.target.value as Method)}
+              style={{ flex: 1 }}
+            >
+              <option value="GET">GET</option>
+              <option value="POST">POST</option>
+              <option value="PUT">PUT</option>
+              <option value="DELETE">DELETE</option>
+            </select>
           <input
             id="url"
-            onChange={(e) => setUrl(e.currentTarget.value)}
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
             placeholder="URL"
+            style={{ flex: 10 }}
           />
-          <input
-            id="body"
-            onChange={(e) => setBody(e.currentTarget.value)}
-			placeholder="Body"
-          />
+
           <button type="submit">Make request</button>
-        </form>
-		<br /><p id="response">{response}</p>
+          <br />
+        </div>
+        <div style={{ overflow: "hidden" }} className="body-row">
+          <div
+            style={{
+              width: "50vw",
+              margin: "1em 1em 1em 0",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <label htmlFor="sendBody">Send body?</label>
+            <input
+              type="checkbox"
+              name="sendBody"
+              id="sendBody"
+              checked={sendBody}
+              onChange={(e) => setSendBody(e.target.checked)}
+            />
+            <textarea
+              id="body"
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              placeholder="Body"
+              style={{ flex: 1, padding: "1em 2em 2em 2em" }}
+            />
+          </div>
+          <pre
+            id="response"
+            style={{
+              textAlign: "left",
+              width: "48vw",
+              overflow: "scroll",
+              padding: "1em 2em 2em 2em",
+              margin: "1em 0 1em 1em",
+            }}
+          >
+            <code style={{ wordWrap: "break-word", whiteSpace: "pre-wrap" }}>
+              {response}
+            </code>
+          </pre>
+        </div>
       </div>
-    </div>
+    </form>
   );
 }
 

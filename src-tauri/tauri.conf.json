@@ -13,6 +13,16 @@
   "tauri": {
     "allowlist": {
       "all": false,
+      "dialog": {
+        "save": true,
+        "open": true
+      },
+      "fs": {
+        "scope": ["$APPDATA/rscc/*"],
+        "all": false,
+        "writeFile": true,
+        "readFile": true
+      },
       "shell": {
         "all": false,
         "open": true
@@ -30,6 +40,7 @@
       "identifier": "com.tauri.dev",
       "targets": "all"
     },
+
     "security": {
       "csp": null
     },

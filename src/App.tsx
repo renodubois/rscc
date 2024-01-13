@@ -1,11 +1,18 @@
 import { useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/tauri";
+import { readTextFile, writeTextFile } from "@tauri-apps/api/fs";
+import { open, save } from "@tauri-apps/api/dialog";
 import "./App.css";
 import { useHotkeys } from "react-hotkeys-hook";
-import { nextTick } from "process";
 
 type Method = "GET" | "POST" | "PUT" | "DELETE";
 type Section = "urlMethod" | "body" | "response";
+interface SavedRequest {
+  method: Method;
+  url: string;
+  body: string;
+  sendBody: boolean;
+}
 
 const MethodArray = ["GET", "POST", "PUT", "DELETE"] as const;
 
@@ -66,6 +73,40 @@ function App() {
     },
     { enableOnFormTags: true }
   );
+
+  useHotkeys("mod+s", async () => {
+    // Save the request
+    const reqToSave: SavedRequest = {
+      url,
+      method,
+      body,
+      sendBody,
+    };
+    const filePath = await save({});
+    if (!filePath) {
+      console.error("couldn't get filepath", filePath);
+      return;
+    }
+    await writeTextFile(filePath, JSON.stringify(reqToSave));
+  });
+
+  useHotkeys("mod+o", async () => {
+    const filePath = await open({
+      multiple: false,
+      filters: [{ name: "JSON File", extensions: ["json"] }],
+    });
+    if (filePath && !Array.isArray(filePath)) {
+      const fileData = await readTextFile(filePath);
+      // TODO(reno): zod parse/validate this
+      const { body, url, method, sendBody }: SavedRequest =
+        JSON.parse(fileData);
+      // restore into the current state
+      setBody(body);
+      setUrl(url);
+      setMethod(method);
+      setSendBody(sendBody);
+    }
+  });
 
   async function makeRequest() {
     // TODO(reno): Some sort of loading indicator

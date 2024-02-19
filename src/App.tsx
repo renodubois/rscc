@@ -1,18 +1,50 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/tauri";
 import { readTextFile, writeTextFile } from "@tauri-apps/api/fs";
 import { open, save } from "@tauri-apps/api/dialog";
 import "./App.css";
 import { useHotkeys } from "react-hotkeys-hook";
+import { z } from "zod";
+import { Store } from "tauri-plugin-store-api";
+import { Request } from "./Request";
+import { Header } from "./types";
 
 type Method = "GET" | "POST" | "PUT" | "DELETE";
 type Section = "urlMethod" | "body" | "response";
-interface SavedRequest {
-  method: Method;
-  url: string;
-  body: string;
-  sendBody: boolean;
-}
+
+const store = new Store(".request");
+const envs = new Store(".environments");
+
+const parseBody = (
+  body: string,
+  envVars: z.infer<typeof EnvironmentSchema>
+) => {
+  return body.replace(/\{\{(\w+)\}\}/g, (match, varName) => {
+    if (envVars[varName]) {
+      return envVars[varName];
+    }
+
+    // If not found, return the original match
+    return match;
+  });
+};
+
+const SavedRequestSchema = z.object({
+  // TODO(reno): Can I make this use the Method type instead of defining a union like this?
+  method: z.union([
+    z.literal("GET"),
+    z.literal("POST"),
+    z.literal("PUT"),
+    z.literal("DELETE"),
+  ]),
+  url: z.string(),
+  body: z.string(),
+  sendBody: z.boolean(),
+});
+type SavedRequest = z.infer<typeof SavedRequestSchema>;
+
+const EnvironmentSchema = z.object({}).catchall(z.string());
+type EnvironmentStore = Array<z.infer<typeof EnvironmentSchema>>;
 
 const MethodArray = ["GET", "POST", "PUT", "DELETE"] as const;
 
@@ -24,6 +56,26 @@ function App() {
   const [response, setResponse] = useState("Response");
   const [sendBody, setSendBody] = useState(true);
   const [activeSection, setActiveSection] = useState<Section>("urlMethod");
+  const [environments, setEnvironments] = useState<EnvironmentStore>([
+    {
+      apiKey: "testkey",
+    },
+  ]);
+  const [envVars, setEnvVars] = useState<{ [k: string]: string }>({});
+  const [headers, setHeaders] = useState<Header[]>([
+    { key: "Content-Type", value: "application/json" },
+	{ key: "Authorization", value: "ApiKey fakekey" },
+	{ key: "test key", value: "asdfljsadfljaksdflkjds" }
+  ]);
+
+  useEffect(() => {
+    // TODO(reno): when I have multiple environments, put them together here
+    let newEnvVars = {};
+    environments.forEach((env) => {
+      newEnvVars = { ...newEnvVars, ...env };
+    });
+    setEnvVars(newEnvVars);
+  }, environments);
 
   const bodyInputRef = useRef<HTMLTextAreaElement>(null);
   const urlInputRef = useRef<HTMLInputElement>(null);
@@ -63,6 +115,20 @@ function App() {
     }
   });
 
+  useHotkeys("k", () => {
+    if (activeSection === "urlMethod") {
+      if (methodInputRef.current) {
+        const i = MethodArray.indexOf(method);
+        let newIndex = i - 1;
+        if (newIndex < 0) {
+          // wrap around
+          newIndex = MethodArray.length - 1;
+        }
+        setMethod(MethodArray[newIndex]);
+      }
+    }
+  });
+
   useHotkeys(
     "esc",
     () => {
@@ -96,27 +162,50 @@ function App() {
       filters: [{ name: "JSON File", extensions: ["json"] }],
     });
     if (filePath && !Array.isArray(filePath)) {
-      const fileData = await readTextFile(filePath);
-      // TODO(reno): zod parse/validate this
-      const { body, url, method, sendBody }: SavedRequest =
-        JSON.parse(fileData);
-      // restore into the current state
-      setBody(body);
-      setUrl(url);
-      setMethod(method);
-      setSendBody(sendBody);
+      try {
+        const fileData = await readTextFile(filePath);
+
+        const request = SavedRequestSchema.parse(JSON.parse(fileData));
+        const { body, url, method, sendBody } = request;
+        // restore into the current state
+        setBody(body);
+        setUrl(url);
+        setMethod(method);
+        setSendBody(sendBody);
+        store.set("request", request);
+      } catch (e) {
+        console.error(
+          "Couldn't read file, or file didn't match expected schema"
+        );
+      }
     }
   });
 
   async function makeRequest() {
     // TODO(reno): Some sort of loading indicator
     if (sendBody) {
-      setResponse(
-        await invoke("make_request", { url, body, methodStr: method })
-      );
+      const parsedBody = parseBody(body, envVars);
+      console.debug(parsedBody);
+      try {
+        setResponse(
+          await invoke("make_request", {
+            url,
+            body: parsedBody,
+            methodStr: method,
+            headers,
+          })
+        );
+      } catch (err) {
+        setResponse(err as unknown as string);
+      }
     } else {
       setResponse(
-        await invoke("make_request", { url, body: "", methodStr: method })
+        await invoke("make_request", {
+          url,
+          body: "",
+          methodStr: method,
+          headers,
+        })
       );
     }
   }
@@ -158,31 +247,16 @@ function App() {
           <br />
         </div>
         <div style={{ overflow: "hidden" }} className="body-row">
-          <div
-            style={{
-              width: "50vw",
-              margin: "1em 1em 1em 0",
-              display: "flex",
-              flexDirection: "column",
-            }}
-          >
-            <label htmlFor="sendBody">Send body?</label>
-            <input
-              type="checkbox"
-              name="sendBody"
-              id="sendBody"
-              checked={sendBody}
-              onChange={(e) => setSendBody(e.target.checked)}
-            />
-            <textarea
-              id="body"
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              placeholder="Body"
-              style={{ flex: 1, padding: "1em 2em 2em 2em" }}
-              ref={bodyInputRef}
-            />
-          </div>
+          <Request
+            ref={bodyInputRef}
+            isActive={activeSection === "body"}
+            body={body}
+            sendBody={sendBody}
+            headers={headers}
+            setBody={setBody}
+            setSendBody={setSendBody}
+            setHeaders={setHeaders}
+          />
           <pre
             id="response"
             style={{

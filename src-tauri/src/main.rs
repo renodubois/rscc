@@ -1,101 +1,45 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-enum Method {
-    Get,
-    Post,
-    Put,
-    Delete,
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize)]
+struct Header {
+    key: String,
+    value: String,
 }
 
-#[tokio::main]
 // Learn more about Tauri commands at https://tauri.app/v1/guides/features/command
 // TODO(reno): Stronger type for method
 #[tauri::command]
-async fn make_request(url: &str, body: &str, method_str: &str) -> String {
-    let method = match method_str {
-        "GET" => Method::Get,
-        "POST" => Method::Post,
-        "PUT" => Method::Put,
-        "DELETE" => Method::Delete,
-        _ => unreachable!(),
-    };
+async fn make_request(
+    url: String,
+    body: String,
+    method_str: String,
+    headers: Vec<Header>,
+) -> Result<String, String> {
     let client = reqwest::Client::new();
-    match method {
-        Method::Get => {
-            // TODO(reno): I've manually removed the ability to send a body w/
-            // a GET request but I should probably handle this differently?
-            let res = client
-                .get(url.to_owned())
-                .header("Content-Type", "application/json")
-                .send()
-                .await;
-            match res {
-                Ok(result) => match result.text().await {
-                    Ok(text_result) => text_result,
-                    Err(e) => panic!("error unwrapping text: {}", e),
-                },
-                Err(e) => {
-                    panic!("error making request: {}", e)
-                }
-            }
-        }
-        Method::Post => {
-            let res = client
-                .post(url.to_owned())
-                .body(body.to_owned())
-                .header("Content-Type", "application/json")
-                .send()
-                .await;
-            match res {
-                Ok(result) => match result.text().await {
-                    Ok(text_result) => text_result,
-                    Err(e) => panic!("error unwrapping text: {}", e),
-                },
-                Err(e) => {
-                    panic!("error making request: {}", e)
-                }
-            }
-        }
-        Method::Put => {
-            let res = client
-                .put(url.to_owned())
-                .body(body.to_owned())
-                .header("Content-Type", "application/json")
-                .send()
-                .await;
-            match res {
-                Ok(result) => match result.text().await {
-                    Ok(text_result) => text_result,
-                    Err(e) => panic!("error unwrapping text: {}", e),
-                },
-                Err(e) => {
-                    panic!("error making request: {}", e)
-                }
-            }
-        }
-        Method::Delete => {
-            let res = client
-                .delete(url.to_owned())
-                .body(body.to_owned())
-                .header("Content-Type", "application/json")
-                .send()
-                .await;
-            match res {
-                Ok(result) => match result.text().await {
-                    Ok(text_result) => text_result,
-                    Err(e) => panic!("error unwrapping text: {}", e),
-                },
-                Err(e) => {
-                    panic!("error making request: {}", e)
-                }
-            }
-        }
+    let method = reqwest::Method::from_bytes(method_str.as_bytes()).unwrap();
+    let mut req = client.request(method, url.to_owned());
+    for header in headers {
+        req = req.header(header.key, header.value);
+    }
+    if body.len() > 0 {
+        req = req.body(body);
+    }
+    let res = req.send().await;
+    match res {
+        Ok(res) => match res.text().await {
+            Ok(text_result) => Ok(text_result),
+            Err(e) => Err(format!("error unwrapping text: {}", e)),
+        },
+        Err(e) => Err(format!("error making request: {}", e)),
     }
 }
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_store::Builder::default().build())
         .invoke_handler(tauri::generate_handler![make_request])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
